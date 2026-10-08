@@ -1,0 +1,156 @@
+:root {
+  --bg: #f2f3f5;
+  --card: #ffffff;
+  --text: #1a1a1a;
+  --muted: #6b7280;
+  --accent: #2b6af3;
+  --accent-text: #ffffff;
+  --border: #e3e5e8;
+  --field: #f5f6f8;
+  --error: #d92d20;
+  --error-bg: #fdecea;
+  --success: #12a150;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111214;
+    --card: #1c1d21;
+    --text: #f2f2f2;
+    --muted: #9aa0a8;
+    --accent: #4d84ff;
+    --border: #2c2e33;
+    --field: #25272c;
+    --error: #ff6b5e;
+    --error-bg: #3a1d1b;
+    --success: #3ccf7c;
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+}
+
+form { display: grid; gap: 12px; }
+
+.head { margin: 4px 4px 12px; }
+h1 { font-size: 22px; margin: 0; }
+h2 { font-size: 17px; margin: 0 0 12px; }
+.muted { color: var(--muted); margin: 4px 0 0; }
+
+.banner {
+  background: #fff4d6; color: #7a5a00;
+  border-radius: 12px; padding: 10px 12px; margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+}
+.card-head { display: flex; justify-content: space-between; align-items: baseline; }
+
+.summary { line-height: 1.5; }
+.summary b { display: block; }
+
+.field { display: block; margin: 0 0 14px; padding: 0; border: 0; min-width: 0; }
+.field:last-child { margin-bottom: 0; }
+.field > span, .field > legend {
+  display: block; padding: 0;
+  font-size: 13px; color: var(--muted); margin-bottom: 6px;
+}
+.field em { font-style: normal; opacity: .8; }
+
+input, select {
+  width: 100%;
+  font: inherit; color: var(--text);
+  background-color: var(--field);
+  border: 1.5px solid transparent;
+  border-radius: 12px;
+  padding: 12px;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+select {
+  padding-right: 36px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+input:focus, select:focus { border-color: var(--accent); }
+
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.seg label { position: relative; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span {
+  display: block; text-align: center;
+  padding: 11px 8px;
+  border-radius: 12px;
+  background: var(--field);
+  border: 1.5px solid transparent;
+  cursor: pointer; user-select: none;
+}
+.seg input:checked + span { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.check { display: flex; gap: 10px; align-items: flex-start; margin-top: 4px; font-size: 14px; cursor: pointer; }
+.check input {
+  width: 22px; height: 22px; flex: none; margin: 0; padding: 0;
+  appearance: auto; -webkit-appearance: checkbox; accent-color: var(--accent);
+}
+
+.invalid, .invalid .seg span { border-color: var(--error) !important; }
+.check.invalid span { color: var(--error); }
+
+.error {
+  margin: 0; padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--error-bg);
+  color: var(--error);
+  font-size: 14px;
+}
+
+.btn {
+  width: 100%;
+  appearance: none; border: 0; cursor: pointer;
+  background: var(--accent); color: var(--accent-text);
+  font: inherit; font-weight: 600;
+  border-radius: 14px; padding: 15px;
+}
+.btn:active { opacity: .85; }
+.btn:disabled { opacity: .5; cursor: default; }
+
+.link {
+  appearance: none; border: 0; background: none; padding: 0;
+  color: var(--accent); font: inherit; font-size: 14px; cursor: pointer;
+}
+
+.done { text-align: center; padding: 32px 16px 16px; }
+.done-icon {
+  width: 64px; height: 64px; margin: 0 auto 16px;
+  border-radius: 50%;
+  background: var(--success); color: #fff;
+  display: grid; place-items: center;
+  font-size: 32px; font-weight: 700;
+}
+.done .muted { margin-bottom: 24px; }
+
+#agentFields > .field { margin-bottom: 14px; }
+#agentFields { margin-bottom: -14px; }
