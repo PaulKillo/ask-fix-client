@@ -95,6 +95,10 @@ function showAgentFields() {
   $('agentEdit').hidden = true;
 }
 
+function syncDownPayment() {
+  $('downPaymentField').hidden = radioValue('payment') !== 'mortgage';
+}
+
 function syncAgencyOther() {
   $('agencyOtherField').hidden = field('agency').value !== OTHER;
 }
@@ -118,7 +122,7 @@ function validate() {
 
   mark(field('clientName'), Boolean(field('clientName').value.trim()));
   mark(field('clientPhone'), phoneValid(field('clientPhone').value));
-  for (const name of ['hasLand', 'hasDownPayment', 'temperature', 'houseType']) {
+  for (const name of ['hasLand', 'temperature', 'houseType', 'payment']) {
     mark(form.querySelector(`[data-name="${name}"]`), Boolean(radioValue(name)));
   }
   mark(field('budget'), Number(digitsOf(field('budget').value)) > 0);
@@ -160,10 +164,12 @@ async function submit(event) {
       name: field('clientName').value.trim(),
       phone: formatPhone(field('clientPhone').value),
       hasLand: radioValue('hasLand') === 'true',
-      hasDownPayment: radioValue('hasDownPayment') === 'true',
+      // Взнос спрашиваем только при ипотеке
+      hasDownPayment: radioValue('payment') === 'mortgage' && field('hasDownPayment').checked,
       temperature: radioValue('temperature'),
       houseType: radioValue('houseType'),
       budget: Number(digitsOf(field('budget').value)),
+      payment: radioValue('payment'),
       district: field('district').value.trim(),
       consent: field('consent').checked,
     },
@@ -202,6 +208,8 @@ function resetClient() {
   for (const name of ['clientName', 'clientPhone', 'budget', 'district']) field(name).value = '';
   form.querySelectorAll('input[type="radio"]').forEach((r) => { r.checked = false; });
   field('consent').checked = false;
+  field('hasDownPayment').checked = false;
+  syncDownPayment();
   form.querySelectorAll('.invalid').forEach((el) => el.classList.remove('invalid'));
   showError('');
 
@@ -223,6 +231,8 @@ function init() {
   for (const name of CONFIG.agencies) select.add(new Option(name, name));
   select.add(new Option('Другое агентство', OTHER));
   select.addEventListener('change', syncAgencyOther);
+
+  form.querySelectorAll('input[name="payment"]').forEach((r) => r.addEventListener('change', syncDownPayment));
 
   const saved = loadAgent();
   if (saved) {

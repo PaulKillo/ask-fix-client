@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Закрепление клиента</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=3">
   <!-- MAX Bridge: даёт глобальный объект window.WebApp -->
   <script src="https://st.max.ru/js/max-web-app.js"></script>
-  <script src="config.js"></script>
+  <script src="config.js?v=3"></script>
 </head>
 <body>
   <main class="app">
@@ -73,14 +73,6 @@
           </div>
         </fieldset>
 
-        <fieldset class="field" data-name="hasDownPayment">
-          <legend>Первоначальный взнос</legend>
-          <div class="seg">
-            <label><input type="radio" name="hasDownPayment" value="true"><span>Есть</span></label>
-            <label><input type="radio" name="hasDownPayment" value="false"><span>Нет</span></label>
-          </div>
-        </fieldset>
-
         <fieldset class="field" data-name="temperature">
           <legend>Тип клиента</legend>
           <div class="seg">
@@ -102,6 +94,19 @@
         <label class="field">
           <span>Бюджет, ₽</span>
           <input name="budget" inputmode="numeric" placeholder="8 500 000" required>
+        </label>
+
+        <fieldset class="field" data-name="payment">
+          <legend>Способ оплаты</legend>
+          <div class="seg">
+            <label><input type="radio" name="payment" value="mortgage"><span>Ипотека</span></label>
+            <label><input type="radio" name="payment" value="cash"><span>Наличные</span></label>
+          </div>
+        </fieldset>
+
+        <label class="check sub" id="downPaymentField" hidden>
+          <input type="checkbox" name="hasDownPayment">
+          <span>Есть первоначальный взнос</span>
         </label>
 
         <label class="field">
@@ -128,6 +133,6 @@
     </section>
   </main>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
