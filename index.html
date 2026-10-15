@@ -3,90 +3,136 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Объекты АСК Групп</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.2.1/ol.css"
-        integrity="sha384-Jpg1uvTciFJuHq+90Ly0/2SKRT9yS5OhbIN5FuFoFWji9fc44ok8xxO88CJi8Z5W"
-        crossorigin="anonymous">
-  <link rel="stylesheet" href="style.css?v=2">
+  <title>Закрепление клиента</title>
+  <link rel="stylesheet" href="style.css?v=3">
   <!-- MAX Bridge: даёт глобальный объект window.WebApp -->
   <script src="https://st.max.ru/js/max-web-app.js"></script>
-  <!-- OpenLayers: карта, подложка OpenStreetMap -->
-  <script src="https://cdn.jsdelivr.net/npm/ol@10.2.1/dist/ol.js"
-          integrity="sha384-2biaJbygszOKXKsLbF+auMBrB377U1RJUvQIsPmEOtUSKzkcsTOZSykhqnkmx2QU"
-          crossorigin="anonymous"></script>
-  <script src="config.js?v=1"></script>
+  <script src="config.js?v=3"></script>
 </head>
 <body>
-  <!-- Загрузка / ошибка -->
-  <section id="screenStatus" class="screen center">
-    <div class="spinner" id="spinner"></div>
-    <p id="statusText" class="muted">Загружаем объекты…</p>
-    <button type="button" class="btn" id="retry" hidden>Повторить</button>
-  </section>
-
-  <!-- Запрос доступа -->
-  <section id="screenRequest" class="screen pad" hidden>
-    <h1>Карта объектов</h1>
-    <p class="muted">Карта доступна агентам партнёров АСК Групп. Заполните данные — менеджер подтвердит доступ, и бот пришлёт уведомление.</p>
-    <form id="requestForm" class="card" novalidate>
-      <label class="field"><span>ФИО</span><input name="name" autocomplete="name" required></label>
-      <label class="field"><span>Телефон</span><input name="phone" type="tel" inputmode="tel" placeholder="+7 900 000-00-00" required></label>
-      <label class="field"><span>Агентство</span>
-        <select name="agency" required><option value="" disabled selected>Выберите агентство</option></select>
-      </label>
-      <label class="field" id="agencyOtherField" hidden><span>Название агентства</span><input name="agencyOther"></label>
-      <p id="requestError" class="error" hidden></p>
-      <button type="submit" class="btn" id="requestSubmit">Запросить доступ</button>
-    </form>
-  </section>
-
-  <!-- Запрос отправлен -->
-  <section id="screenRequested" class="screen center pad" hidden>
-    <div class="big-icon">⏳</div>
-    <h2>Запрос отправлен</h2>
-    <p class="muted">Менеджер АСК Групп проверит его, и бот пришлёт уведомление. После этого откройте карту снова.</p>
-    <button type="button" class="btn" id="checkAgain">Проверить доступ</button>
-  </section>
-
-  <!-- Основной экран -->
-  <section id="screenMain" class="screen main" hidden>
-    <header class="topbar">
-      <div class="tabs" role="tablist">
-        <button type="button" role="tab" class="tab active" data-view="map">Карта</button>
-        <button type="button" role="tab" class="tab" data-view="list">Список</button>
-      </div>
-      <div class="filters">
-        <input id="search" type="search" placeholder="Поиск: посёлок, КН">
-        <select id="tractFilter"><option value="">Все тракты</option></select>
-      </div>
-      <p id="geoNote" class="geo-note" hidden></p>
+  <main class="app">
+    <header class="head">
+      <h1>Закрепление клиента</h1>
+      <p class="muted">АСК Групп · срок закрепления <span id="fixDays">90</span> дней</p>
     </header>
 
-    <div id="map" class="view"></div>
-    <div id="list" class="view list" hidden></div>
+    <div id="notInMax" class="banner" hidden>
+      Страница открыта в обычном браузере. Отправить заявку можно только из бота в MAX.
+    </div>
 
-    <button type="button" class="locate" id="locate" aria-label="Моё местоположение">◎</button>
-  </section>
+    <form id="form" novalidate>
+      <!-- Агент -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Агент</h2>
+          <button type="button" class="link" id="agentEdit" hidden>Изменить</button>
+        </div>
 
-  <!-- Карточка объекта -->
-  <div id="sheetBackdrop" class="backdrop" hidden></div>
-  <section id="sheet" class="sheet" hidden aria-live="polite">
-    <div class="grab"></div>
-    <h2 id="sheetPlace"></h2>
-    <p id="sheetAddress" class="address"></p>
-    <dl class="facts">
-      <dt>Тракт</dt><dd id="sheetTract"></dd>
-      <dt>От центра Тюмени</dt><dd id="sheetFromCity"></dd>
-      <dt id="sheetFromMeLabel">От вас</dt><dd id="sheetFromMe"></dd>
-      <dt>Кадастровый номер</dt>
-      <dd><span id="sheetCad"></span> <button type="button" class="link" id="copyCad">Копировать</button></dd>
-    </dl>
-    <button type="button" class="btn" id="routeBtn">🚗 Построить маршрут</button>
-    <div id="extraRoutes"></div>
-  </section>
+        <div id="agentSummary" class="summary" hidden></div>
 
-  <div id="toast" class="toast" hidden></div>
+        <div id="agentFields">
+          <label class="field">
+            <span>ФИО агента</span>
+            <input name="agentName" autocomplete="name" required>
+          </label>
+          <label class="field">
+            <span>Телефон агента</span>
+            <input name="agentPhone" type="tel" inputmode="tel" placeholder="+7 900 000-00-00" required>
+          </label>
+          <label class="field">
+            <span>Агентство</span>
+            <select name="agency" required>
+              <option value="" disabled selected>Выберите агентство</option>
+            </select>
+          </label>
+          <label class="field" id="agencyOtherField" hidden>
+            <span>Название агентства</span>
+            <input name="agencyOther">
+          </label>
+        </div>
+      </section>
 
-  <script src="app.js?v=2"></script>
+      <!-- Клиент -->
+      <section class="card">
+        <h2>Клиент</h2>
+
+        <label class="field">
+          <span>ФИО клиента</span>
+          <input name="clientName" required>
+        </label>
+        <label class="field">
+          <span>Телефон клиента</span>
+          <input name="clientPhone" type="tel" inputmode="tel" placeholder="+7 900 000-00-00" required>
+        </label>
+
+        <fieldset class="field" data-name="hasLand">
+          <legend>Участок</legend>
+          <div class="seg">
+            <label><input type="radio" name="hasLand" value="true"><span>Есть</span></label>
+            <label><input type="radio" name="hasLand" value="false"><span>Нет</span></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="field" data-name="temperature">
+          <legend>Тип клиента</legend>
+          <div class="seg">
+            <label><input type="radio" name="temperature" value="warm"><span>Тёплый</span></label>
+            <label><input type="radio" name="temperature" value="cold"><span>Холодный</span></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="field" data-name="houseType">
+          <legend>Тип дома</legend>
+          <div class="seg">
+            <label><input type="radio" name="houseType" value="Камень"><span>Камень</span></label>
+            <label><input type="radio" name="houseType" value="Дерево"><span>Дерево</span></label>
+            <label><input type="radio" name="houseType" value="Модульный"><span>Модульный</span></label>
+            <label><input type="radio" name="houseType" value="Каркасный"><span>Каркасный</span></label>
+          </div>
+        </fieldset>
+
+        <label class="field">
+          <span>Бюджет, ₽</span>
+          <input name="budget" inputmode="numeric" placeholder="8 500 000" required>
+        </label>
+
+        <fieldset class="field" data-name="payment">
+          <legend>Способ оплаты</legend>
+          <div class="seg">
+            <label><input type="radio" name="payment" value="mortgage"><span>Ипотека</span></label>
+            <label><input type="radio" name="payment" value="cash"><span>Наличные</span></label>
+          </div>
+        </fieldset>
+
+        <label class="check sub" id="downPaymentField" hidden>
+          <input type="checkbox" name="hasDownPayment">
+          <span>Есть первоначальный взнос</span>
+        </label>
+
+        <label class="field">
+          <span>Район / населённый пункт <em>— необязательно</em></span>
+          <input name="district">
+        </label>
+
+        <label class="check" data-name="consent">
+          <input type="checkbox" name="consent">
+          <span>Клиент дал согласие на передачу его персональных данных в АСК Групп</span>
+        </label>
+      </section>
+
+      <p id="formError" class="error" role="alert" hidden></p>
+
+      <button type="submit" class="btn" id="submit">Отправить на закрепление</button>
+    </form>
+
+    <section id="done" class="card done" hidden>
+      <div class="done-icon">✓</div>
+      <h2>Заявка отправлена</h2>
+      <p class="muted">Менеджер АСК Групп проверит её, и бот пришлёт результат в чат.</p>
+      <button type="button" class="btn" id="again">Закрепить ещё клиента</button>
+    </section>
+  </main>
+
+  <script src="app.js?v=3"></script>
 </body>
 </html>
