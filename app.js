@@ -1,17 +1,27 @@
-// Мини-приложение «Закрепление клиента» для агентов партнёров АСК Групп.
+// Мини-приложение «Объекты АСК Групп»: карта участков для агентов партнёров.
 
 const CONFIG = window.APP_CONFIG;
 const WebApp = window.WebApp;
 const inMax = Boolean(WebApp && WebApp.initData);
 
-const form = document.getElementById('form');
 const $ = (id) => document.getElementById(id);
-const field = (name) => form.elements[name];
-
-const AGENT_KEY = 'ask_agent';
+const AGENT_KEY = 'ask_agent';           // общий с ботом закрепления: данные агента подставятся сами
+const REQUESTED_KEY = 'ask_objects_requested';
 const OTHER = '__other__';
+const TYUMEN = [65.5343, 57.153]; // lon, lat
+
+let objects = [];
+let me = null;            // { lat, lon } — положение агента
+let selectedId = null;
+let map, objectSource, meFeature = null;
 
 // ---------- Утилиты ----------
+
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch (_) { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch (_) {} },
+  remove(key) { try { localStorage.removeItem(key); } catch (_) {} },
+};
 
 function haptic(kind) {
   try {
@@ -20,9 +30,19 @@ function haptic(kind) {
   } catch (_) {}
 }
 
-const digitsOf = (s) => String(s || '').replace(/\D/g, '');
+function toast(text) {
+  const el = $('toast');
+  el.textContent = text;
+  el.hidden = false;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { el.hidden = true; }, 2200);
+}
 
-// Приводит номер к виду +7 900 000-00-00 по мере ввода
+function show(screenId) {
+  for (const id of ['screenStatus', 'screenRequest', 'screenRequested', 'screenMain']) $(id).hidden = id !== screenId;
+}
+
+const digitsOf = (s) => String(s || '').replace(/\D/g, '');
 function formatPhone(raw) {
   let d = digitsOf(raw);
   if (!d) return '';
@@ -30,247 +50,373 @@ function formatPhone(raw) {
   if (d[0] !== '7') d = `7${d}`;
   d = d.slice(0, 11);
   const p = [d.slice(1, 4), d.slice(4, 7), d.slice(7, 9), d.slice(9, 11)];
-  let out = '+7';
-  if (p[0]) out += ` ${p[0]}`;
-  if (p[1]) out += ` ${p[1]}`;
-  if (p[2]) out += `-${p[2]}`;
-  if (p[3]) out += `-${p[3]}`;
-  return out;
-}
-const phoneValid = (s) => digitsOf(formatPhone(s)).length === 11;
-
-const formatMoney = (raw) => {
-  const d = digitsOf(raw).replace(/^0+/, '').slice(0, 12);
-  return d ? Number(d).toLocaleString('ru-RU') : '';
-};
-
-const radioValue = (name) => form.querySelector(`input[name="${name}"]:checked`)?.value;
-
-// ---------- Данные агента (запоминаем на устройстве) ----------
-
-function loadAgent() {
-  try { return JSON.parse(localStorage.getItem(AGENT_KEY)) || null; } catch (_) { return null; }
+  return `+7${p[0] ? ` ${p[0]}` : ''}${p[1] ? ` ${p[1]}` : ''}${p[2] ? `-${p[2]}` : ''}${p[3] ? `-${p[3]}` : ''}`;
 }
 
-function saveAgent(agent) {
-  try { localStorage.setItem(AGENT_KEY, JSON.stringify(agent)); } catch (_) {}
+// Расстояние по прямой, км
+function distanceKm(a, b) {
+  const R = 6371, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const fmtKm = (km) => (km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)) + ' км';
+
+function openExternal(url) {
+  try {
+    if (inMax) { WebApp.openLink(url); return; }
+  } catch (_) {}
+  window.open(url, '_blank', 'noopener');
 }
 
-function readAgent() {
-  const listed = field('agency').value !== OTHER;
-  return {
-    name: field('agentName').value.trim(),
-    phone: formatPhone(field('agentPhone').value),
-    agency: listed ? field('agency').value : field('agencyOther').value.trim(),
-    agencyListed: listed,
-  };
-}
+const routeUrl = (lat, lon) => `https://yandex.ru/maps/?rtext=~${lat},${lon}&rtt=auto`;
 
-function fillAgent(agent) {
-  field('agentName').value = agent.name || '';
-  field('agentPhone').value = agent.phone || '';
-  if (agent.agencyListed && CONFIG.agencies.includes(agent.agency)) {
-    field('agency').value = agent.agency;
-  } else if (agent.agency) {
-    field('agency').value = OTHER;
-    field('agencyOther').value = agent.agency;
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.append(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (__) {}
+    ta.remove();
   }
-  syncAgencyOther();
+  toast('Кадастровый номер скопирован');
+  haptic('light');
 }
 
-function showAgentSummary(agent) {
-  const box = $('agentSummary');
-  box.replaceChildren();
-  const name = document.createElement('b');
-  name.textContent = agent.name;
-  box.append(name, `${agent.agency} · ${agent.phone}`);
-  box.hidden = false;
-  $('agentFields').hidden = true;
-  $('agentEdit').hidden = false;
+// ---------- Сервер ----------
+
+async function callApi(body) {
+  const res = await fetch(CONFIG.apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: WebApp?.initData || '', ...body }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || `Ошибка сервера (${res.status})`);
+  return data;
 }
 
-function showAgentFields() {
-  $('agentSummary').hidden = true;
-  $('agentFields').hidden = false;
-  $('agentEdit').hidden = true;
-}
-
-function syncDownPayment() {
-  $('downPaymentField').hidden = radioValue('payment') !== 'mortgage';
-}
-
-function syncAgencyOther() {
-  $('agencyOtherField').hidden = field('agency').value !== OTHER;
-}
-
-// ---------- Проверка формы ----------
-
-function validate() {
-  const bad = [];
-  const mark = (el, ok) => { el.classList.toggle('invalid', !ok); if (!ok) bad.push(el); };
-
-  const agentVisible = !$('agentFields').hidden;
-  const agent = readAgent();
-  const agentOk = agent.name && phoneValid(agent.phone) && agent.agency;
-  if (agentVisible || !agentOk) {
-    if (!agentVisible) showAgentFields();
-    mark(field('agentName'), Boolean(agent.name));
-    mark(field('agentPhone'), phoneValid(agent.phone));
-    mark(field('agency'), Boolean(field('agency').value));
-    if (field('agency').value === OTHER) mark(field('agencyOther'), Boolean(agent.agency));
-  }
-
-  mark(field('clientName'), Boolean(field('clientName').value.trim()));
-  mark(field('clientPhone'), phoneValid(field('clientPhone').value));
-  for (const name of ['hasLand', 'temperature', 'houseType', 'payment']) {
-    mark(form.querySelector(`[data-name="${name}"]`), Boolean(radioValue(name)));
-  }
-  mark(field('budget'), Number(digitsOf(field('budget').value)) > 0);
-  mark(form.querySelector('[data-name="consent"]'), field('consent').checked);
-
-  return bad;
-}
-
-function showError(text) {
-  const box = $('formError');
-  box.textContent = text;
-  box.hidden = !text;
-}
-
-// ---------- Отправка ----------
-
-async function submit(event) {
-  event.preventDefault();
-  showError('');
-
-  const bad = validate();
-  if (bad.length) {
-    showError('Заполните отмеченные поля.');
-    bad[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-    haptic('error');
-    return;
-  }
+async function load() {
+  show('screenStatus');
+  $('spinner').hidden = false;
+  $('retry').hidden = true;
+  $('statusText').textContent = 'Загружаем объекты…';
 
   if (!inMax) {
-    showError('Отправка работает только внутри MAX. Откройте приложение из бота.');
+    $('spinner').hidden = true;
+    $('statusText').textContent = 'Карта открывается только из бота АСК Групп в MAX.';
     return;
   }
 
-  const agent = readAgent();
-  const payload = {
-    initData: WebApp.initData,
-    agent,
-    client: {
-      name: field('clientName').value.trim(),
-      phone: formatPhone(field('clientPhone').value),
-      hasLand: radioValue('hasLand') === 'true',
-      // Взнос спрашиваем только при ипотеке
-      hasDownPayment: radioValue('payment') === 'mortgage' && field('hasDownPayment').checked,
-      temperature: radioValue('temperature'),
-      houseType: radioValue('houseType'),
-      budget: Number(digitsOf(field('budget').value)),
-      payment: radioValue('payment'),
-      district: field('district').value.trim(),
-      consent: field('consent').checked,
-    },
-  };
-
-  const button = $('submit');
-  button.disabled = true;
-  button.textContent = 'Отправляем…';
-
   try {
-    const res = await fetch(CONFIG.apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `Ошибка сервера (${res.status})`);
-
-    saveAgent(agent);
-    haptic('success');
-    try { WebApp.disableClosingConfirmation(); } catch (_) {}
-    form.hidden = true;
-    $('done').hidden = false;
-    window.scrollTo(0, 0);
+    const data = await callApi({ action: 'objects' });
+    if (data.access) {
+      store.remove(REQUESTED_KEY);
+      objects = data.objects;
+      showMain();
+    } else if (store.get(REQUESTED_KEY)) {
+      show('screenRequested');
+    } else {
+      showRequestForm();
+    }
   } catch (e) {
-    const offline = e instanceof TypeError;
-    showError(offline ? 'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.' : e.message);
-    haptic('error');
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Отправить на закрепление';
+    $('spinner').hidden = true;
+    $('statusText').textContent = e instanceof TypeError
+      ? 'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.'
+      : e.message;
+    $('retry').hidden = false;
   }
 }
 
-function resetClient() {
-  for (const name of ['clientName', 'clientPhone', 'budget', 'district']) field(name).value = '';
-  form.querySelectorAll('input[type="radio"]').forEach((r) => { r.checked = false; });
-  field('consent').checked = false;
-  field('hasDownPayment').checked = false;
-  syncDownPayment();
-  form.querySelectorAll('.invalid').forEach((el) => el.classList.remove('invalid'));
-  showError('');
+// ---------- Запрос доступа ----------
 
-  const agent = loadAgent();
-  if (agent) showAgentSummary(agent);
+function showRequestForm() {
+  const form = $('requestForm');
+  const select = form.elements.agency;
+  if (select.options.length === 1) {
+    for (const name of CONFIG.agencies) select.add(new Option(name, name));
+    select.add(new Option('Другое агентство', OTHER));
+  }
 
-  $('done').hidden = true;
-  form.hidden = false;
-  window.scrollTo(0, 0);
+  let saved = null;
+  try { saved = JSON.parse(store.get(AGENT_KEY)); } catch (_) {}
+  if (saved) {
+    form.elements.name.value = saved.name || '';
+    form.elements.phone.value = saved.phone || '';
+    if (saved.agencyListed && CONFIG.agencies.includes(saved.agency)) select.value = saved.agency;
+    else if (saved.agency) { select.value = OTHER; form.elements.agencyOther.value = saved.agency; }
+  } else {
+    const u = WebApp?.initDataUnsafe?.user;
+    form.elements.name.value = [u?.last_name, u?.first_name].filter(Boolean).join(' ');
+  }
+  $('agencyOtherField').hidden = select.value !== OTHER;
+  show('screenRequest');
+}
+
+async function submitRequest(event) {
+  event.preventDefault();
+  const form = $('requestForm');
+  const listed = form.elements.agency.value !== OTHER;
+  const agent = {
+    name: form.elements.name.value.trim(),
+    phone: formatPhone(form.elements.phone.value),
+    agency: listed ? form.elements.agency.value : form.elements.agencyOther.value.trim(),
+    agencyListed: listed,
+  };
+
+  const bad = [];
+  const mark = (el, ok) => { el.classList.toggle('invalid', !ok); if (!ok) bad.push(el); };
+  mark(form.elements.name, Boolean(agent.name));
+  mark(form.elements.phone, digitsOf(agent.phone).length === 11);
+  mark(form.elements.agency, Boolean(form.elements.agency.value));
+  if (!listed) mark(form.elements.agencyOther, Boolean(agent.agency));
+
+  const err = $('requestError');
+  if (bad.length) {
+    err.textContent = 'Заполните отмеченные поля.';
+    err.hidden = false;
+    haptic('error');
+    return;
+  }
+  err.hidden = true;
+
+  const btn = $('requestSubmit');
+  btn.disabled = true;
+  btn.textContent = 'Отправляем…';
+  try {
+    const data = await callApi({ action: 'request', agent });
+    store.set(AGENT_KEY, JSON.stringify(agent));
+    haptic('success');
+    if (data.access) { load(); return; }
+    store.set(REQUESTED_KEY, '1');
+    show('screenRequested');
+  } catch (e) {
+    err.textContent = e instanceof TypeError ? 'Нет связи с сервером. Попробуйте ещё раз.' : e.message;
+    err.hidden = false;
+    haptic('error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Запросить доступ';
+  }
+}
+
+// ---------- Карта и список ----------
+
+function filtered() {
+  const q = $('search').value.trim().toLowerCase();
+  const tract = $('tractFilter').value;
+  return objects.filter((o) => (!tract || o.tract === tract)
+    && (!q || `${o.place} ${o.address} ${o.cadastral}`.toLowerCase().includes(q)));
+}
+
+const sortKey = (o) => (me ? distanceKm(me, o) : o.km);
+
+function renderList() {
+  const items = filtered().sort((a, b) => sortKey(a) - sortKey(b));
+  const list = $('list');
+  list.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'Ничего не найдено';
+    list.append(empty);
+    return;
+  }
+  for (const o of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'item';
+    btn.innerHTML = '<div class="item-top"><span class="item-place"></span><span class="item-dist"></span></div>'
+      + '<div class="item-sub"></div>';
+    btn.querySelector('.item-place').textContent = o.place;
+    btn.querySelector('.item-dist').textContent = me ? fmtKm(distanceKm(me, o)) : `${fmtKm(o.km)} от Тюмени`;
+    btn.querySelector('.item-sub').textContent = `${o.tract} · ${o.address}`;
+    btn.addEventListener('click', () => openSheet(o.id));
+    list.append(btn);
+  }
+}
+
+// Метка-«капля» в виде SVG: синяя обычная, оранжевая выбранная
+function pinStyle(color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="40" viewBox="0 0 30 40">`
+    + `<path d="M15 1C7.3 1 1 7.2 1 14.9 1 25.3 15 39 15 39s14-13.7 14-24.1C29 7.2 22.7 1 15 1z" fill="${color}" stroke="#fff" stroke-width="2"/>`
+    + '<circle cx="15" cy="15" r="5" fill="#fff"/></svg>';
+  return new ol.style.Style({
+    image: new ol.style.Icon({ src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, anchor: [0.5, 1] }),
+  });
+}
+const PIN = pinStyle('#2b6af3');
+const PIN_SELECTED = pinStyle('#ff6a00');
+const ME = new ol.style.Style({
+  image: new ol.style.Circle({
+    radius: 8,
+    fill: new ol.style.Fill({ color: '#12a150' }),
+    stroke: new ol.style.Stroke({ color: '#fff', width: 3 }),
+  }),
+});
+
+function renderMarkers() {
+  const visible = new Set(filtered().map((o) => o.id));
+  for (const f of objectSource.getFeatures()) f.set('hidden', !visible.has(f.getId()));
+}
+
+function initMap() {
+  objectSource = new ol.source.Vector({
+    features: objects.map((o) => {
+      const f = new ol.Feature(new ol.geom.Point(ol.proj.fromLonLat([o.lon, o.lat])));
+      f.setId(o.id);
+      return f;
+    }),
+  });
+
+  const objectLayer = new ol.layer.Vector({
+    source: objectSource,
+    style: (f) => (f.get('hidden') ? null : (f.getId() === selectedId ? PIN_SELECTED : PIN)),
+  });
+  objectLayer.setZIndex(1);
+
+  map = new ol.Map({
+    target: 'map',
+    layers: [new ol.layer.Tile({ source: new ol.source.OSM() }), objectLayer],
+    controls: ol.control.defaults.defaults({ rotate: false, attributionOptions: { collapsible: false } }),
+    view: new ol.View({ center: ol.proj.fromLonLat(TYUMEN), zoom: 9 }),
+  });
+
+  map.on('singleclick', (e) => {
+    const f = map.forEachFeatureAtPixel(e.pixel, (x) => x, { layerFilter: (l) => l === objectLayer, hitTolerance: 6 });
+    if (f) openSheet(f.getId());
+  });
+
+  renderMarkers();
+  if (objects.length) map.getView().fit(objectSource.getExtent(), { padding: [40, 24, 24, 24], maxZoom: 14 });
+}
+
+function setView(view) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === view));
+  $('map').hidden = view !== 'map';
+  $('list').hidden = view !== 'list';
+  $('locate').hidden = view !== 'map';
+  if (view === 'map') setTimeout(() => map.updateSize(), 0);
+  else renderList();
+}
+
+function showMain() {
+  const tracts = [...new Set(objects.map((o) => o.tract))].sort((a, b) => a.localeCompare(b, 'ru'));
+  const sel = $('tractFilter');
+  sel.length = 1;
+  for (const t of tracts) sel.add(new Option(t, t));
+
+  show('screenMain');
+  if (!map) initMap(); else map.updateSize();
+  renderList();
+  locate(false);
+}
+
+// ---------- Местоположение агента ----------
+
+function locate(centerMap) {
+  const note = $('geoNote');
+  if (!navigator.geolocation) {
+    note.textContent = 'Расстояние считается от центра Тюмени: телефон не передаёт местоположение.';
+    note.hidden = false;
+    return;
+  }
+  navigator.geolocation.getCurrentPosition((pos) => {
+    me = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+    note.hidden = true;
+    const point = new ol.geom.Point(ol.proj.fromLonLat([me.lon, me.lat]));
+    if (meFeature) meFeature.setGeometry(point);
+    else {
+      meFeature = new ol.Feature(point);
+      const meLayer = new ol.layer.Vector({ source: new ol.source.Vector({ features: [meFeature] }), style: ME });
+      meLayer.setZIndex(2);
+      map.addLayer(meLayer);
+    }
+    if (centerMap) map.getView().animate({ center: point.getCoordinates(), zoom: 11, duration: 300 });
+    renderList();
+    if (selectedId != null) fillSheet(objects.find((o) => o.id === selectedId));
+  }, () => {
+    note.textContent = 'Разрешите доступ к местоположению, чтобы видеть расстояние от вас. Пока считаем от центра Тюмени.';
+    note.hidden = false;
+  }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60 * 1000 });
+}
+
+// ---------- Карточка объекта ----------
+
+function fillSheet(o) {
+  $('sheetPlace').textContent = o.place;
+  $('sheetAddress').textContent = o.address;
+  $('sheetTract').textContent = o.tract;
+  $('sheetFromCity').textContent = `${fmtKm(o.km)} по дорогам, ~${o.min} мин`;
+  $('sheetFromMeLabel').hidden = !me;
+  $('sheetFromMe').hidden = !me;
+  if (me) $('sheetFromMe').textContent = `≈ ${fmtKm(distanceKm(me, o))} по прямой`;
+  $('sheetCad').textContent = o.cadastral;
+
+  const extra = $('extraRoutes');
+  extra.replaceChildren();
+  (o.extra || []).forEach((p, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn secondary';
+    b.textContent = `Маршрут ко ${i + 2}-му участку`;
+    b.addEventListener('click', () => openExternal(routeUrl(p.lat, p.lon)));
+    extra.append(b);
+  });
+}
+
+function openSheet(id) {
+  const o = objects.find((x) => x.id === id);
+  if (!o) return;
+  selectedId = id;
+  objectSource.changed();
+  fillSheet(o);
+  $('sheet').hidden = false;
+  $('sheetBackdrop').hidden = false;
+  haptic('light');
+  try { WebApp?.BackButton?.show(); } catch (_) {}
+}
+
+function closeSheet() {
+  selectedId = null;
+  objectSource?.changed();
+  $('sheet').hidden = true;
+  $('sheetBackdrop').hidden = true;
+  try { WebApp?.BackButton?.hide(); } catch (_) {}
 }
 
 // ---------- Инициализация ----------
 
 function init() {
-  $('fixDays').textContent = CONFIG.fixDays;
-  if (!inMax) $('notInMax').hidden = false;
+  $('retry').addEventListener('click', load);
+  $('checkAgain').addEventListener('click', () => { store.remove(REQUESTED_KEY); load(); });
 
-  const select = field('agency');
-  for (const name of CONFIG.agencies) select.add(new Option(name, name));
-  select.add(new Option('Другое агентство', OTHER));
-  select.addEventListener('change', syncAgencyOther);
+  const form = $('requestForm');
+  form.addEventListener('submit', submitRequest);
+  form.elements.phone.addEventListener('input', (e) => { e.target.value = formatPhone(e.target.value); });
+  form.elements.agency.addEventListener('change', () => { $('agencyOtherField').hidden = form.elements.agency.value !== OTHER; });
+  form.addEventListener('input', (e) => e.target.classList.remove('invalid'));
 
-  form.querySelectorAll('input[name="payment"]').forEach((r) => r.addEventListener('change', syncDownPayment));
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => setView(t.dataset.view)));
+  $('search').addEventListener('input', () => { renderMarkers(); renderList(); });
+  $('tractFilter').addEventListener('change', () => { renderMarkers(); renderList(); });
+  $('locate').addEventListener('click', () => locate(true));
 
-  const saved = loadAgent();
-  if (saved) {
-    fillAgent(saved);
-    showAgentSummary(saved);
-  } else if (inMax) {
-    // Подставим имя из профиля MAX как подсказку
-    const u = WebApp.initDataUnsafe?.user;
-    const name = [u?.last_name, u?.first_name].filter(Boolean).join(' ');
-    if (name) field('agentName').value = name;
-  }
-
-  $('agentEdit').addEventListener('click', showAgentFields);
-
-  for (const name of ['agentPhone', 'clientPhone']) {
-    field(name).addEventListener('input', (e) => { e.target.value = formatPhone(e.target.value); });
-  }
-  field('budget').addEventListener('input', (e) => { e.target.value = formatMoney(e.target.value); });
-
-  // Снимаем красную рамку, как только поле исправлено
-  form.addEventListener('input', (e) => {
-    e.target.classList.remove('invalid');
-    e.target.closest('.invalid')?.classList.remove('invalid');
+  $('sheetBackdrop').addEventListener('click', closeSheet);
+  try { WebApp?.BackButton?.onClick(closeSheet); } catch (_) {}
+  $('copyCad').addEventListener('click', () => copyText($('sheetCad').textContent));
+  $('routeBtn').addEventListener('click', () => {
+    const o = objects.find((x) => x.id === selectedId);
+    if (o) openExternal(routeUrl(o.lat, o.lon));
   });
-  form.addEventListener('change', (e) => {
-    e.target.closest('.invalid')?.classList.remove('invalid');
-    if (e.target.type === 'radio') haptic('light');
-  });
-
-  // Предупредить при закрытии, если агент начал заполнять анкету
-  form.addEventListener('input', () => {
-    try { WebApp?.enableClosingConfirmation(); } catch (_) {}
-  });
-
-  form.addEventListener('submit', submit);
-  $('again').addEventListener('click', resetClient);
 
   WebApp?.ready?.();
+  load();
 }
 
 init();
